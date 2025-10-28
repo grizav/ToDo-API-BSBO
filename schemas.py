@@ -20,6 +20,7 @@ class TaskBase(BaseModel):
     is_urgent: bool = Field(
         ...,
         description="Срочность задачи")
+    completed_at: Optional[datetime] = None
 
 # Схема для создания новой задачи 
 # Наследует все поля от TaskBase
