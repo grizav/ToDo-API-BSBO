@@ -4,11 +4,15 @@ from typing import AsyncGenerator
 import os
 from dotenv import load_dotenv
 
-try:
-    from models import Base, Task
-except ImportError:
-    class Base(DeclarativeBase):
-        pass
+# try:
+#     from models import Base, Task
+# except ImportError:
+#     class Base(DeclarativeBase):
+#         pass
+
+class Base(DeclarativeBase):
+    """Базовый класс для всех моделей SQLAlchemy"""
+    pass
 
 load_dotenv()
 
@@ -26,6 +30,7 @@ AsyncSessionLocal = async_sessionmaker(
 )
 
 async def init_db():
+    from models import Task  # Импорт внутри функции!
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     print("База данных инициализирована!")

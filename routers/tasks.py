@@ -7,6 +7,7 @@ from datetime import datetime
 from schemas import TaskCreate, TaskUpdate, TaskResponse
 from models import Task
 from database import get_async_session
+from utils import calculate_urgency, determine_quadrant, calculate_days_until_deadline
 
 
 router = APIRouter(
@@ -93,39 +94,45 @@ async def get_task_by_id(
 
     if not task:
         raise HTTPException(status_code=404, detail="Задача не найдена")
-    return task
+    
+    days_deadline = calculate_days_until_deadline(task.deadline_at)
+
+    task_dict = task.__dict__.copy()
+    task_dict['days_until_deadline'] = days_deadline # Добавляем вычисленное значение
+    
+    # 2. Проверяем, просрочена ли задача (если дедлайн существует)
+    if task.deadline_at is not None and days_deadline is not None and days_deadline < 0:
+        task_dict['status_message'] = "Задача просрочена" # <-- ДОБАВЛЯЕМ СООБЩЕНИЕ!
+    else:
+        task_dict['status_message'] = "Все идет по плану!"
+    return TaskResponse(**task_dict)
 
 @router.post("/", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
 async def create_task(
     task: TaskCreate,
     db: AsyncSession = Depends(get_async_session)
 ) -> TaskResponse:
+    # Вычисляем срочность на основе дедлайна
+    is_urgent = calculate_urgency(task.deadline_at)
+    
     # Определяем квадрант
-    if task.is_important and task.is_urgent:
-        quadrant = "Q1"
-    elif task.is_important and not task.is_urgent:
-        quadrant = "Q2"
-    elif not task.is_important and task.is_urgent:
-        quadrant = "Q3"
-    else:
-        quadrant = "Q4"
+    quadrant = determine_quadrant(task.is_important, is_urgent)
 
     new_task = Task(
         title=task.title,
         description=task.description,
         is_important=task.is_important,
-        is_urgent=task.is_urgent,
+        is_urgent=is_urgent, # Вычисленное значение
         quadrant=quadrant,
+        deadline_at=task.deadline_at, 
         completed=False  # Новая задача всегда не выполнена
-        # created_at заполнится автоматически (server_default=func.now())
     )
 
     db.add(new_task)  # Добавляем в сессию (еще не в БД!)
     await db.commit()  # Выполняем INSERT в БД
     await db.refresh(new_task)  # Обновляем объект (получаем ID из БД)
-    # FastAPI автоматически преобразует Task → TaskResponse
+    # FastAPI автоматически преобразует Task → TaskResponse    
     return new_task
-
 
 @router.put("/{task_id}", response_model=TaskResponse)
 async def update_task(
@@ -152,15 +159,9 @@ async def update_task(
         setattr(task, field, value)  # task.field = value
 
     # ШАГ 4: Пересчитываем квадрант, если изменились важность или срочность
-    if "is_important" in update_data or "is_urgent" in update_data:
-        if task.is_important and task.is_urgent:
-            task.quadrant = "Q1"
-        elif task.is_important and not task.is_urgent:
-            task.quadrant = "Q2"
-        elif not task.is_important and task.is_urgent:
-            task.quadrant = "Q3"
-        else:
-            task.quadrant = "Q4"
+    if "is_important" in update_data or "deadline_at" in update_data:
+        task.is_urgent = calculate_urgency(task.deadline_at)
+        task.quadrant = determine_quadrant(task.is_important, task.is_urgent)
 
     await db.commit()  # UPDATE tasks SET ... WHERE id = task_id
     await db.refresh(task)  # Обновить объект из БД
